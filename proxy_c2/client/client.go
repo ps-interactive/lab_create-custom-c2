@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	ip               []string = []string{"172.31.24.20,172.31.24.30"} // put the ip(s) of your server(s).
+	ip               []string = []string{"172.31.24.20", "172.31.24.30"} // put the ip(s) of your server(s).
 	ipIndex          int      = 1
 	url              string   = ""
 	checkin_endpoint string   = "/checkin" //added (s)
